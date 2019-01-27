@@ -19,12 +19,6 @@ localparam data_addr_width = data_words_l2;
   reg [data_addr_width - 1:0] data_addr;
   reg data_mem_we;
 
-  always @(posedge clk) begin
-    if (data_mem_we)
-        data_mem[data_addr] <= data_mem_wd;
-    data_mem_rd <= data_mem[data_addr];
-  end
-
 localparam code_width = 32;
 localparam code_width_l2b = $clog2(data_width / 8);
 localparam code_words = 512;
@@ -33,10 +27,6 @@ localparam code_addr_width = code_words_l2 - code_width_l2b;
   reg [code_width - 1:0]  code_mem[data_words - 1:0];
   reg [code_width - 1:0]  code_mem_rd;
   wire [code_addr_width - 1:0] code_addr;
-
-  always @(posedge clk) begin
-    code_mem_rd <= code_mem[code_addr];
-  end
 
   reg [29:0]  pc;
 
@@ -53,24 +43,27 @@ localparam code_addr_width = code_words_l2 - code_width_l2b;
   reg [31:0] rf_wd;
   reg rf_we;
 
+  // UPDATE CODE_MEM_RD
+  always @(posedge clk) begin
+    code_mem_rd <= code_mem[code_addr];
+  end
+
+  // UPDATE DATA_MEM
+  always @(posedge clk) begin
+    if (data_mem_we)
+        data_mem[data_addr] <= data_mem_wd;
+    data_mem_rd <= data_mem[data_addr];
+  end
+
+  // UPDATE REGS
   always @(posedge clk) begin
     data_mem_wd <= 0;
     data_addr <= 0;
-//   code_addr <= 0;
     data_mem_we <= 0;
     if (!resetn) begin
       pc <= 0;
     end else begin
       data_addr <= pc;
-
-      //rf_rs1 <= code_mem_rd[19:16];
-      //rf_rs2 <= code_mem_rd[0:3];
-      //rf_ws <= code_mem_rd[15:12];
-      //rf_we <= code_mem_rd[15];
-
-      //rf_wd <= code_mem_rd;
-
-      //code_addr <= pc;
       // if INST is branch then branch
       if (code_mem_rd[27:25] == 3'b101) begin
         pc <= code_mem_rd[23:0];
@@ -93,20 +86,17 @@ localparam code_addr_width = code_words_l2 - code_width_l2b;
     end
   end
 
+  // CODE TESTING BLOCK
   initial begin
     // initialize reg
     rf[0] = 1'b1;
     rf[1] = 1'b1;
-
-    // add
-    //code_mem[0] = 32'b1110_00_1_0100_0_0000_0001_000_00000001;
-    // add
-    //code_mem[1] = 32'b1110_00_1_0100_0_0001_0000_000_00000001;
-    // branch
+    // add instructions between reg0 and reg1, with immediate 1
     code_mem[0] = 32'b11100010100000000001000000000001;
     code_mem[1] = 32'b11100010100000010000000000000001;
     code_mem[2] = 32'b11100010100000000001000000000001;
     code_mem[3] = 32'b11100010100000010000000000000001;
+    // branch instruction to set pc to 0
     code_mem[4] = 32'b11101010000000000000000000000000;
   end
 
