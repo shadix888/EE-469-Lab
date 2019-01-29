@@ -31,7 +31,6 @@ localparam code_addr_width = code_words_l2 - code_width_l2b;
   reg [29:0]  pc;
 
   assign led = pc[1]; // make the LED blink on the low order bit of the PC
-
   assign code_addr = pc[code_addr_width - 1:0];
 
   reg [31:0] rf[0:31];
@@ -43,11 +42,6 @@ localparam code_addr_width = code_words_l2 - code_width_l2b;
   reg [31:0] rf_wd;
   reg rf_we;
 
-  // UPDATE CODE_MEM_RD
-  always @(posedge clk) begin
-    code_mem_rd <= code_mem[code_addr];
-  end
-
   // UPDATE DATA_MEM
   always @(posedge clk) begin
     if (data_mem_we)
@@ -55,7 +49,24 @@ localparam code_addr_width = code_words_l2 - code_width_l2b;
     data_mem_rd <= data_mem[data_addr];
   end
 
-  // UPDATE REGS
+    // UPDATE CODE_MEM_RD
+    always @(posedge clk) begin
+      code_mem_rd <= code_mem[code_addr];
+    end
+
+  reg [1:0] state = 0;
+
+  // UPDATE CYCLE
+  always @(*) begin
+    if (code_mem_rd[27:25] == 3'b101) begin
+      state = 2'b11;
+    end else if (code_mem_rd[24:21] == 4'b0100) begin
+      state = 2'b10;
+    end else begin
+      state = 2'b00;
+    end
+  end
+
   always @(posedge clk) begin
     data_mem_wd <= 0;
     data_addr <= 0;
@@ -65,13 +76,12 @@ localparam code_addr_width = code_words_l2 - code_width_l2b;
     end else begin
       data_addr <= pc;
       // if INST is branch then branch
-      if (code_mem_rd[27:25] == 3'b101) begin
-        pc <= code_mem_rd[23:0];
-        rf_we <= 1'b0;
-      end else begin
-        pc <= pc + 1;
-        // if INST is add then add immediate
-        if (code_mem_rd[24:21] == 4'b0100) begin
+      case(state)
+        2'b00: begin
+          pc <= pc + 1;
+          rf_we <= 1'b0;
+        end 2'b10: begin
+          pc <= pc + 1;
           rf_we <= 1'b1;
           rf_ws <= code_mem_rd[15:12];
           rf_wd <= rf[code_mem_rd[19:16]] + code_mem_rd[7:0];
@@ -79,29 +89,31 @@ localparam code_addr_width = code_words_l2 - code_width_l2b;
           rf_d2 <= rf[rf_rs2];
           // rf[ws] <= rf_wd
           rf[code_mem_rd[15:12]] <= rf[code_mem_rd[19:16]] + code_mem_rd[7:0];
-        end else begin
+        end 2'b11: begin
+          pc <= code_mem_rd[23:0];
           rf_we <= 1'b0;
+        end default: begin
+          pc <= pc + 1;
         end
-      end
+      endcase
     end
   end
 
   // CODE TESTING BLOCK
   initial begin
     // initialize reg
-    rf[0] = 1'b1;
-    rf[1] = 1'b1;
+    rf[0] = 1'b0;
     // add instructions between reg0 and reg1, with immediate 1
-    code_mem[0] = 32'b11100010100000000001000000000001;
-    code_mem[1] = 32'b11100010100000010000000000000001;
-    code_mem[2] = 32'b11100010100000000001000000000001;
-    code_mem[3] = 32'b11100010100000010000000000000001;
+    code_mem[0] = 32'b11100010100000000000000000000001;
+    code_mem[1] = 32'b11100010100000000000000000000001;
+    code_mem[2] = 32'b11100010100000000000000000000001;
+    code_mem[3] = 32'b11100010100000000000000000000001;
     // branch instruction to set pc to 0
     code_mem[4] = 32'b11101010000000000000000000000000;
   end
 
   assign debug_port1 = pc[7:0];
-  assign debug_port2 = rf_d1[7:0];
+  assign debug_port2 = rf[0];
   assign debug_port3 = rf_we;
 
 endmodule
