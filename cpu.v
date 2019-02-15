@@ -1,119 +1,372 @@
-module cpu(
-  input wire clk,
-  input wire resetn,
-  output wire led,
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+/**************STUFF TO DO***************
+ * fix memory so that it isn't a bunch if registers.
+ * add pipelining
+*/
+module cpu (
+  input  wire       clk,
+  input  wire       resetn,
+  output wire       led,
   output wire [7:0] debug_port1,
   output wire [7:0] debug_port2,
   output wire [7:0] debug_port3
   );
 
-localparam data_width = 32;
-localparam data_width_l2b = $clog2(data_width / 8);
-localparam data_words = 512;
-localparam data_words_l2 = $clog2(data_words);
-localparam data_addr_width = data_words_l2;
-
-  reg [data_width - 1:0]  data_mem[data_words - 1:0];
-  reg [data_width - 1:0]  data_mem_rd;
-  reg [data_width - 1:0]  data_mem_wd;
-  reg [data_addr_width - 1:0] data_addr;
-  reg data_mem_we;
-
-localparam code_width = 32;
-localparam code_width_l2b = $clog2(data_width / 8);
-localparam code_words = 512;
-localparam code_words_l2 = $clog2(data_words);
-localparam code_addr_width = code_words_l2 - code_width_l2b;
-  reg [code_width - 1:0]  code_mem[data_words - 1:0];
-  reg [code_width - 1:0]  code_mem_rd;
-  wire [code_addr_width - 1:0] code_addr;
-
-  reg [29:0]  pc;
-
-  assign led = pc[1]; // make the LED blink on the low order bit of the PC
-  assign code_addr = pc[code_addr_width - 1:0];
-
-  reg [31:0] rf[0:31];
-  reg [31:0] rf_d1;
-  reg [31:0] rf_d2;
-  reg [4:0] rf_rs1;
-  reg [4:0] rf_rs2;
-  reg [4:0] rf_ws;
-  reg [31:0] rf_wd;
-  reg rf_we;
-
-  // UPDATE DATA_MEM
-  always @(posedge clk) begin
-    if (data_mem_we)
-        data_mem[data_addr] <= data_mem_wd;
-    data_mem_rd <= data_mem[data_addr];
-  end
-
-    // UPDATE CODE_MEM_RD
-    always @(posedge clk) begin
-      code_mem_rd <= code_mem[code_addr];
-    end
-
-  reg [1:0] state = 0;
-
-  // UPDATE CYCLE
-  always @(*) begin
-    if (code_mem_rd[27:25] == 3'b101) begin
-      state = 2'b11;
-    end else if (code_mem_rd[24:21] == 4'b0100) begin
-      state = 2'b10;
-    end else begin
-      state = 2'b00;
-    end
-  end
-
-  always @(posedge clk) begin
-    data_mem_wd <= 0;
-    data_addr <= 0;
-    data_mem_we <= 0;
-    if (!resetn) begin
-      pc <= 0;
-    end else begin
-      data_addr <= pc;
-      // if INST is branch then branch
-      case(state)
-        2'b00: begin
-          pc <= pc + 1;
-          rf_we <= 1'b0;
-        end 2'b10: begin
-          pc <= pc + 1;
-          rf_we <= 1'b1;
-          rf_ws <= code_mem_rd[15:12];
-          rf_wd <= rf[code_mem_rd[19:16]] + code_mem_rd[7:0];
-          rf_d1 <= rf[rf_rs1];
-          rf_d2 <= rf[rf_rs2];
-          // rf[ws] <= rf_wd
-          rf[code_mem_rd[15:12]] <= rf[code_mem_rd[19:16]] + code_mem_rd[7:0];
-        end 2'b11: begin
-          pc <= code_mem_rd[23:0];
-          rf_we <= 1'b0;
-        end default: begin
-          pc <= pc + 1;
-        end
-      endcase
-    end
-  end
-
-  // CODE TESTING BLOCK
-  initial begin
-    // initialize reg
-    rf[0] = 1'b0;
-    // add instructions between reg0 and reg1, with immediate 1
-    code_mem[0] = 32'b11100010100000000000000000000001;
-    code_mem[1] = 32'b11100010100000000000000000000001;
-    code_mem[2] = 32'b11100010100000000000000000000001;
-    code_mem[3] = 32'b11100010100000000000000000000001;
-    // branch instruction to set pc to 0
-    code_mem[4] = 32'b11101010000000000000000000000000;
-  end
-
+  assign led = (read_reg_one[1] & read_reg_one[0]) | (read_reg_one[0] & read_reg_one[2]);
   assign debug_port1 = pc[7:0];
-  assign debug_port2 = rf[0];
-  assign debug_port3 = rf_we;
+  assign debug_port2 = write_reg[7:0];
+  assign debug_port3 = {4'b0, inst_w_addr};
 
+  //control wires
+  wire reg_w_en;
+  wire load_inst;
+  wire store_inst;
+  wire immediate_inst;
+  wire branch_inst;
+  wire branch_link;
+  wire [3:0] opcode;
+  ///////////////
+
+  //connection wires/////
+  wire [31:0] instruction;
+  reg [31:0] pc;
+  wire [31:0] pc_n;
+  wire [3:0]  read_reg_two_addr;
+  wire [31:0] read_reg_one, read_reg_two;
+  wire [31:0] ALU_o;
+  wire [31:0] read_data;
+  wire [31:0] write_reg;
+  wire [31:0] immediate;
+  wire [31:0] alu_two_i;
+  wire [31:0] data_into_reg;
+  wire [3:0] inst_w_addr;
+  wire pass_cond;
+  wire carry;
+  wire overflow;
+  ///////////////////////
+
+  //condition bits//
+  reg negative_r, zero_r, carry_r, overflow_r;
+  //////////////////
+
+  control_unit main_control (
+    .instruction(instruction[31:20]),
+    .zero_r(zero_r),
+    .negative_r(negative_r),
+    .carry_r(carry_r),
+    .overflow_r(overflow_r),
+    .resetn(resetn),
+    .reg_w_en(reg_w_en),
+    .load_inst(load_inst),
+    .store_inst(store_inst),
+    .immediate_inst(immediate_inst),
+    .branch_inst(branch_inst),
+    .opcode(opcode),
+    .branch_link(branch_link),
+    .pass_cond(pass_cond)
+    );
+
+  mux32b2to1 pc_add
+    (.zero_i(4)
+    ,.one_i({{6{instruction[23]}}, instruction[23:0], 2'b00})
+    ,.select_i(branch_inst & pass_cond)
+    ,.out_o(pc_n)
+    );
+
+  inst_mem code_data
+    (.rd_addr_i(pc)
+    ,.inst_o(instruction)
+    );
+
+  mux4b2to1 read_reg_mux
+    (.zero_i(instruction[3:0])
+    ,.one_i(instruction[15:12])
+    ,.select_i(store_inst)
+    ,.out_o(read_reg_two_addr)
+    );
+
+  mux4b2to1 write_reg_mux
+    (.zero_i(instruction[15:12])
+    ,.one_i(4'b1110)
+    ,.select_i(branch_link)
+    ,.out_o(inst_w_addr)
+    );
+
+  registers arm_regs
+    (.rd_addr_1_i(instruction[19:16])
+    ,.rd_addr_2_i(read_reg_two_addr)
+    ,.w_addr_i(inst_w_addr)
+    ,.data_i(write_reg)
+    ,.w_en_i(reg_w_en)
+    ,.clk_i(clk)
+    ,.data_1_o(read_reg_one)
+    ,.data_2_o(read_reg_two)
+    );
+
+  mux32b2to1 immediate_choice
+    (.zero_i({{24{instruction[7]}}, instruction[7:0]})
+    ,.one_i({{20{instruction[11]}}, instruction[11:0]})
+    ,.select_i(store_inst | load_inst)
+    ,.out_o(immediate)
+    );
+
+  mux32b2to1 imm_or_reg
+    (.zero_i(read_reg_two)
+    ,.one_i(immediate)
+    ,.select_i(immediate_inst)
+    ,.out_o(alu_two_i)
+    );
+
+  ALU main_alu
+    (.data_1_i(read_reg_one)
+    ,.data_2_i(alu_two_i)
+    ,.data_o(ALU_o)
+    ,.control_i(opcode)
+    ,.overflow(overflow)
+    ,.carry(carry)
+    );
+
+  data_mem cpu_data
+    (.addr_i(ALU_o)
+    ,.data_i(read_reg_two)
+    ,.w_en_i(store_inst)
+    ,.rd_en_i(load_inst)
+    ,.clk_i(clk)
+    ,.data_o(read_data)
+    );
+
+  mux32b2to1 write_choice
+    (.zero_i(ALU_o)
+    ,.one_i(read_data)
+    ,.select_i(load_inst)
+    ,.out_o(data_into_reg)
+    );
+
+  mux32b2to1 link_choice
+    (.zero_i(data_into_reg)
+    ,.one_i(pc)
+    ,.select_i(branch_link)
+    ,.out_o(write_reg)
+    );
+
+  always @(posedge clk) begin
+    if (~resetn) begin
+      pc <= 32'b0;
+    end else begin
+      pc <= pc + pc_n;
+    end
+    if ((~branch_inst) & (~store_inst) & (~load_inst)) begin
+      negative_r <= ALU_o[31];
+      zero_r <= (ALU_o == 32'b0);
+      carry_r <= carry;
+      overflow_r <= overflow;
+    end
+  end
+endmodule
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////helper modules//////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+module inst_mem
+  ( input wire [31:0] rd_addr_i
+  , output reg [31:0] inst_o
+  );
+
+  always @(*) begin
+    case (rd_addr_i)
+      // testing imm add,imm subtract, and unconditional branch
+      // 32'h00000000 : inst_o = 32'he2811003; //ADD R1, R1, #3
+      // 32'h00000004 : inst_o = 32'he2411002; //SUB R1, R1, #2
+      // 32'h00000008 : inst_o = 32'heafffffe; //B #-2
+      // default : inst_o = 32'heaffffff; //B #-1
+
+      // testing reg add, load, store, branch
+      // 32'h00000000 : inst_o = 32'he2822003; //ADD R2, R2, #3
+      // 32'h00000004 : inst_o = 32'he0823003; //ADD R3, R2, R3
+      // 32'h00000008 : inst_o = 32'he5823000; //STR R3, [R2]
+      // 32'h0000000c : inst_o = 32'he5924000; //LDR R4, [R2]
+      // 32'h00000010 : inst_o = 32'heafffffd; //B #-3
+      // default : inst_o = 32'heaffffff; //B #-1
+
+      // testing branch+link, conditinal branch
+      32'h00000000 : inst_o = 32'he2811003; //ADD R1, R1, #3
+      32'h00000004 : inst_o = 32'he2822007; //ADD R2, R2, #7
+      32'h00000008 : inst_o = 32'he0423001; //SUB R3, R2, R1
+      32'h0000000c : inst_o = 32'h0a000002; //BEQ #2
+      32'h00000010 : inst_o = 32'he2422001; //SUB R2, R2, #1
+      32'h00000014 : inst_o = 32'hebfffffd; //Bl #-3
+      default : inst_o = 32'heaffffff; //B #-1
+    endcase
+  end
+endmodule
+
+module data_mem
+  ( input wire [31:0] addr_i
+  , input wire [31:0] data_i
+  , input wire w_en_i
+  , inout wire rd_en_i
+  , input wire clk_i
+  , output reg [31:0] data_o
+  );
+
+  reg [31:0] data [31:0];
+  assign data_o = (rd_en_i) ? data[addr_i] : 32'b0;
+  always @(posedge clk_i) begin
+    if (w_en_i) begin
+      data[addr_i] <= data_i;
+    //end else if (rd_en_i) begin
+      //data_o <= data[addr_i];
+    end
+  end
+endmodule
+
+module registers
+  ( input wire [3:0] rd_addr_1_i
+  , input wire [3:0] rd_addr_2_i
+  , input wire [3:0] w_addr_i
+  , input wire [31:0] data_i
+  , input wire w_en_i
+  , input wire clk_i
+  , output wire [31:0] data_1_o
+  , output wire [31:0] data_2_o
+  );
+
+  reg [31:0] regist [15:0];
+
+  assign data_1_o = regist[rd_addr_1_i];
+  assign data_2_o = regist[rd_addr_2_i];
+
+  always @(posedge clk_i) begin
+    if (w_en_i) begin
+      regist[w_addr_i] <= data_i;
+    end
+  end
+endmodule
+
+module ALU
+  ( input wire [31:0] data_1_i
+  , input wire [31:0] data_2_i
+  , output wire [31:0] data_o
+  , output wire overflow
+  , output wire carry
+  , input wire [3:0] control_i
+  );
+
+  reg [32:0] data_t;
+
+  always @(*) begin
+    case (control_i)
+      4'b0000 : data_t = data_1_i & data_2_i;
+      4'b0001 : data_t = data_1_i ^ data_2_i;
+      4'b0010 : data_t = data_1_i + ~data_2_i + 1;
+      4'b0011 : data_t = data_2_i + ~data_1_i + 1;
+      4'b0100 : data_t = data_1_i + data_2_i;
+      4'b1100 : data_t = ~(data_1_i | data_2_i);
+      4'b1101 : data_t = data_2_i;
+      4'b1110 : data_t = data_1_i & (~data_2_i);
+      4'b1111 : data_t = ~data_2_i;
+      default : data_t = data_1_i;
+    endcase
+  end
+  assign overflow = ((data_t[32:31] == 2'b01) | (data_t[32:31] == 2'b10));
+  assign carry = (((data_o < data_1_i) & (control_i == 4'b0100)) | ((data_o > data_1_i) & (control_i[3:1] == 3'b001)));
+  assign data_o = data_t[31:0];
+endmodule
+
+module mux32b2to1
+  ( input wire [31:0] zero_i
+  , input wire [31:0] one_i
+  , input wire select_i
+  , output reg [31:0] out_o
+  );
+
+  always @(*) begin
+    case (select_i)
+      1'b0 : out_o = zero_i;
+      1'b1 : out_o = one_i;
+      default : out_o = 32'b0;
+    endcase
+  end
+endmodule
+
+module mux4b2to1
+  ( input wire [3:0] zero_i
+  , input wire [3:0] one_i
+  , input wire select_i
+  , output reg [3:0] out_o
+  );
+
+  always @(*) begin
+    case (select_i)
+      1'b0 : out_o = zero_i;
+      1'b1 : out_o = one_i;
+      default : out_o = 4'b0;
+    endcase
+  end
+endmodule
+
+module control_unit
+  (input wire [11:0] instruction
+  , input wire zero_r
+  , input wire negative_r
+  , input wire carry_r
+  , input wire overflow_r
+  , input wire resetn
+  , output wire reg_w_en
+  , output wire load_inst
+  , output wire store_inst
+  , output wire immediate_inst
+  , output wire branch_inst
+  , output reg [3:0] opcode
+  , output wire branch_link
+  , output reg pass_cond
+  );
+//////////////////////////branch and link ////////////////////////////////////////////////////////data processing/////////////////////////////////////////load/////////////////////////
+  assign reg_w_en = ((instruction[7] & ~instruction[6] & instruction[5] & instruction[4]) | (~instruction[7] & ~instruction[6]) | (~instruction[7] & instruction[6] & instruction[0])) & resetn;
+  assign load_inst = ((~instruction[7]) & instruction[6] & instruction[0]) & resetn;
+  assign store_inst = ((~instruction[7]) & instruction[6] & (~instruction[0])) & resetn;
+  assign immediate_inst = ((~instruction[7]) & (instruction[6] ^ instruction[5]));
+  assign branch_inst = (instruction[7] & (~instruction[6]) & instruction[5]);
+  assign branch_link = (branch_inst & instruction[4]);
+
+  always @(*) begin
+    if ((~branch_inst) & (~store_inst) & (~load_inst)) begin
+      opcode = instruction[4:1];
+    end else if (instruction[3]) begin
+      opcode = 4'b0100;
+    end else begin
+      opcode = 4'b0010;
+    end
+  end
+
+  always @(*) begin
+    case (instruction[11:8])
+      4'b0000 : pass_cond = zero_r;
+      4'b0001 : pass_cond = ~zero_r;
+      4'b0010 : pass_cond = carry_r;
+      4'b0011 : pass_cond = ~carry_r;
+      4'b0100 : pass_cond = negative_r;
+      4'b0101 : pass_cond = ~negative_r;
+      4'b0110 : pass_cond = overflow_r;
+      4'b0111 : pass_cond = ~overflow_r;
+      4'b1000 : pass_cond = carry_r & ~zero_r;
+      4'b1010 : pass_cond = ~carry_r & zero_r;
+      4'b1001 : pass_cond = negative_r == overflow_r;
+      4'b1011 : pass_cond = negative_r !== overflow_r;
+      4'b1100 : pass_cond = ~zero_r & (negative_r == overflow_r);
+      4'b1101 : pass_cond = zero_r | (negative_r !== overflow_r);
+      4'b1110 : pass_cond = 1'b1;
+      4'b1111 : pass_cond = 1'b0;
+      default : pass_cond = 1'b0;
+    endcase
+  end
 endmodule
