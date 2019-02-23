@@ -198,12 +198,34 @@ module inst_mem
       // default : inst_o = 32'heaffffff; //B #-1
 
       // testing branch+link, conditinal branch
-      32'h00000000 : inst_o = 32'he2811003; //ADD R1, R1, #3
-      32'h00000004 : inst_o = 32'he2822007; //ADD R2, R2, #7
-      32'h00000008 : inst_o = 32'he0423001; //SUB R3, R2, R1
-      32'h0000000c : inst_o = 32'h0a000002; //BEQ #2
-      32'h00000010 : inst_o = 32'he2422001; //SUB R2, R2, #1
-      32'h00000014 : inst_o = 32'hebfffffd; //Bl #-3
+      //32'h00000000 : inst_o = 32'he2811003; //ADD R1, R1, #3
+      //32'h00000004 : inst_o = 32'he2822007; //ADD R2, R2, #7
+      //32'h00000008 : inst_o = 32'he0423001; //SUB R3, R2, R1
+      //32'h0000000c : inst_o = 32'h0a000002; //BEQ #2
+      //32'h00000010 : inst_o = 32'he2422001; //SUB R2, R2, #1
+      //32'h00000014 : inst_o = 32'hebfffffd; //Bl #-3
+
+      // 12 instructions
+      32'h00000000 : inst_o = 32'he2811003; //ADD R1, R1, #3 TESTING ADD IMM 1
+      32'h00000004 : inst_o = 32'he2411002; //SUB R1, R1, #2 TESTING SUB IMM 2
+      32'h00000008 : inst_o = 32'he2822003; //ADD R2, R2, #3
+      32'h0000000c : inst_o = 32'he0823003; //ADD R3, R2, R3 TESTING ADD REG 3
+      32'h00000010 : inst_o = 32'he5823000; //STR R3, [R2]   TESTING STR     4
+      32'h00000014 : inst_o = 32'he5924000; //LDR R4, [R2]   TESTING LDR     5
+      32'h00000018 : inst_o = 32'he0423001; //SUB R3, R2, R1 TESTING SUB REG 6
+      32'h0000001c : inst_o = 32'he1811002; //ORR R1, R2     TESTING ORR     7
+      32'h00000020 : inst_o = 32'he0011002; //AND R1, R2     TESTING AND     8
+      32'h00000024 : inst_o = 32'he0211002; //EOR R1, R2     TESTING EOR     9
+      32'h00000028 : inst_o = 32'he0411001; //RESET R1 to 0
+      32'h0000002c : inst_o = 32'he0422002; //RESET R2 to 0
+      32'h00000030 : inst_o = 32'hea000004; //B #4           TESTING B       10
+
+      32'h00000040 : inst_o = 32'he2811003; //ADD R1, R1, #3
+      32'h00000044 : inst_o = 32'he2822007; //ADD R2, R2, #7
+      32'h00000048 : inst_o = 32'he0423001; //SUB R3, R2, R1
+      32'h0000004c : inst_o = 32'h0a000002; //BEQ #2         TESTING BEQ     11
+      32'h00000050 : inst_o = 32'he2422001; //SUB R2, R2, #1
+      32'h00000054 : inst_o = 32'hebfffffd; //Bl #-3         TESTING BL      12
       default : inst_o = 32'heaffffff; //B #-1
     endcase
   end
