@@ -1,13 +1,16 @@
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
 
 
 /**************STUFF TO DO***************
  * fix memory so that it isn't a bunch if registers.
  * add pipelining
+ * - add registers
+ * - add control logic
+ * - squash bad instructions for branches
 */
 module cpu (
   input  wire       clk,
@@ -23,7 +26,7 @@ module cpu (
   assign debug_port2 = write_reg[7:0];
   assign debug_port3 = {4'b0, inst_w_addr};
 
-  //control wires
+ //control wires
   wire reg_w_en;
   wire load_inst;
   wire store_inst;
@@ -34,21 +37,19 @@ module cpu (
   ///////////////
 
   //connection wires/////
-  wire [31:0] instruction;
-  reg [31:0] pc;
-  wire [31:0] pc_n;
-  wire [3:0]  read_reg_two_addr;
-  wire [31:0] read_reg_one, read_reg_two;
-  wire [31:0] ALU_o;
-  wire [31:0] read_data;
-  wire [31:0] write_reg;
-  wire [31:0] immediate;
-  wire [31:0] alu_two_i;
-  wire [31:0] data_into_reg;
-  wire [3:0] inst_w_addr;
-  wire pass_cond;
-  wire carry;
-  wire overflow;
+  reg [31:0] instruction_f, instruction_d, instruction_x, instruction_m, instruction_w;
+  reg [31:0] pc, pc_d, pc_x, pc_m, pc_n;
+  reg [31:0] read_reg_one_d, read_reg_one_x, read_reg_two_d, read_reg_two_x, read_reg_two_m;
+  reg [31:0] ALU_o_x, ALU_o_m, ALU_o_w;
+  reg [31:0] read_data_m, read_data_w;
+  reg [31:0] write_reg;
+  reg [31:0] immediate;
+  reg [31:0] alu_two_i;
+  reg [31:0] data_into_reg;
+  reg [3:0]  inst_w_addr;
+  reg        pass_cond;
+  reg        carry;
+  reg        overflow;
   ///////////////////////
 
   //condition bits//
@@ -73,77 +74,70 @@ module cpu (
     );
 
   mux32b2to1 pc_add
-    (.zero_i(4)
-    ,.one_i({{6{instruction[23]}}, instruction[23:0], 2'b00})
+    (.zero_i(pc + 4)
+    ,.one_i(pc_x + {{6{instruction_m[23]}}, instruction_m[23:0], 2'b00})
     ,.select_i(branch_inst & pass_cond)
     ,.out_o(pc_n)
     );
 
   inst_mem code_data
     (.rd_addr_i(pc)
-    ,.inst_o(instruction)
-    );
-
-  mux4b2to1 read_reg_mux
-    (.zero_i(instruction[3:0])
-    ,.one_i(instruction[15:12])
-    ,.select_i(store_inst)
-    ,.out_o(read_reg_two_addr)
+    ,.inst_o(instruction_f)
     );
 
   mux4b2to1 write_reg_mux
-    (.zero_i(instruction[15:12])
+    (.zero_i(instruction_x[15:12])
     ,.one_i(4'b1110)
     ,.select_i(branch_link)
     ,.out_o(inst_w_addr)
     );
 
   registers arm_regs
-    (.rd_addr_1_i(instruction[19:16])
-    ,.rd_addr_2_i(read_reg_two_addr)
+    (.rd_addr_1_i(instruction_d[19:16])
+    ,.rd_addr_2_i(instruction_d[3:0])
     ,.w_addr_i(inst_w_addr)
     ,.data_i(write_reg)
     ,.w_en_i(reg_w_en)
     ,.clk_i(clk)
-    ,.data_1_o(read_reg_one)
-    ,.data_2_o(read_reg_two)
+    ,.data_1_o(read_reg_one_d)
+    ,.data_2_o(read_reg_two_d)
     );
 
   mux32b2to1 immediate_choice
-    (.zero_i({{24{instruction[7]}}, instruction[7:0]})
-    ,.one_i({{20{instruction[11]}}, instruction[11:0]})
+    (.zero_i({{24{instruction_x[7]}}, instruction_x[7:0]})
+    ,.one_i({{20{instruction_x[11]}}, instruction_x[11:0]})
     ,.select_i(store_inst | load_inst)
     ,.out_o(immediate)
     );
 
   mux32b2to1 imm_or_reg
-    (.zero_i(read_reg_two)
+    (.zero_i(read_reg_two_x)
     ,.one_i(immediate)
     ,.select_i(immediate_inst)
     ,.out_o(alu_two_i)
     );
 
   ALU main_alu
-    (.data_1_i(read_reg_one)
+    (.data_1_i(read_reg_one_x)
     ,.data_2_i(alu_two_i)
-    ,.data_o(ALU_o)
+    ,.data_o(ALU_o_x)
     ,.control_i(opcode)
     ,.overflow(overflow)
     ,.carry(carry)
     );
 
   data_mem cpu_data
-    (.addr_i(ALU_o)
-    ,.data_i(read_reg_two)
+    (.addr_i(ALU_o_m)
+    ,.data_i(read_reg_two_m)
     ,.w_en_i(store_inst)
     ,.rd_en_i(load_inst)
     ,.clk_i(clk)
-    ,.data_o(read_data)
+    ,.data_o(read_data_m)
     );
 
   mux32b2to1 write_choice
-    (.zero_i(ALU_o)
-    ,.one_i(read_data)
+    (.zero_i(ALU_o_w)
+    ,.one_i(read_data_w)
     ,.select_i(load_inst)
     ,.out_o(data_into_reg)
     );
@@ -159,13 +153,67 @@ module cpu (
     if (~resetn) begin
       pc <= 32'b0;
     end else begin
-      pc <= pc + pc_n;
+      pc <= pc_n;
     end
     if ((~branch_inst) & (~store_inst) & (~load_inst)) begin
       negative_r <= ALU_o[31];
       zero_r <= (ALU_o == 32'b0);
       carry_r <= carry;
       overflow_r <= overflow;
+    end
+  end
+
+  //fetch to decode
+  always @(posedge clk) begin
+    if (~resetn) begin
+      instruction_d <= 32'b0;
+      pc_d <=32'b0;
+    end else begin
+      instruction_d <= instruction_f;
+      pc_d <= pc;
+    end
+  end
+
+  //decode to execute
+  always @(posedge clk) begin
+    if (~resetn) begin
+      instruction_x <= 32'b0;
+      pc_x <= 32'b0;
+      read_reg_one_x <= 32'b0;
+      read_reg_two_x <= 32'b0;
+    end else begin
+      instruction_x <= instruction_d;
+      pc_x <= pc_d;
+      read_reg_one_x <= read_reg_one_d;
+      read_ref_two_x <= read_reg_two_d;
+    end
+  end
+  
+  //execute to memory
+  always @(posedge clk) begin
+    if (~resetn) begin
+      instruction_m <= 32'b0;
+      read_reg_two_m <= 32'b0;
+      ALU_o_m <= 32'b0;
+      pc_m <= 32'b0;
+    end else begin
+      instruction_m <= instruction_x;
+      read_reg_two_m <= read_reg_two_x;
+      ALU_o_m <= ALU_o_x;
+      pc_m <= pc_x;
+    end
+  end
+  
+  //memory to write
+  always @(posedge clk) begin
+    if (~resetn) begin
+      read_data_w <= 32'b0;
+      ALU_o_w <= 32'b0;
+      instruction_w <= 32'b0;
+    end else begin
+      read_data_w <= read_data_m;
+      ALU_o_w <= ALU_o_m;
+      instruction_w <= instruction_m;
     end
   end
 endmodule
@@ -391,4 +439,15 @@ module control_unit
       default : pass_cond = 1'b0;
     endcase
   end
+endmodule
+
+module pipeline_control
+  ( input wire [3:0] Rd
+  , input wire [3:0] Rn
+  , input wire [3:0] Rm
+  , input wire Immediate
+  , output wire mux_en
+  );
+
+  assign mux_en = ((Rd == Rn) | ((Rd == Rm) & ~Immediate));
 endmodule
