@@ -30,15 +30,15 @@ module cpu (
   wire reg_w_en;
   wire load_inst;
   wire store_inst;
-  wire immediate_inst;
-  wire branch_inst;
-  wire branch_link;
-  wire [3:0] opcode;
+  wire immediate_inst_d, immediate_inst_x;
+  wire branch_inst_d, branch_inst_x;
+  wire branch_link_d, branch_link_x, branch_link_m, branch_link_w;
+  wire [3:0] opcode_d, opcode_x;
   ///////////////
 
   //connection wires/////
   reg [31:0] instruction_f, instruction_d, instruction_x, instruction_m, instruction_w;
-  reg [31:0] pc, pc_d, pc_x, pc_m, pc_n;
+  reg [31:0] pc, pc_d, pc_x, pc_m, pc_n, pc_w;
   reg [31:0] read_reg_one_d, read_reg_one_x, read_reg_two_d, read_reg_two_x, read_reg_two_m;
   reg [31:0] ALU_o_x, ALU_o_m, ALU_o_w;
   reg [31:0] read_data_m, read_data_w;
@@ -47,36 +47,38 @@ module cpu (
   reg [31:0] alu_two_i;
   reg [31:0] data_into_reg;
   reg [3:0]  inst_w_addr;
-  reg        pass_cond;
-  reg        carry;
   reg        overflow;
+  reg        carry;
   ///////////////////////
 
   //condition bits//
   reg negative_r, zero_r, carry_r, overflow_r;
   //////////////////
 
-  control_unit main_control (
-    .instruction(instruction[31:20]),
-    .zero_r(zero_r),
-    .negative_r(negative_r),
-    .carry_r(carry_r),
-    .overflow_r(overflow_r),
-    .resetn(resetn),
-    .reg_w_en(reg_w_en),
-    .load_inst(load_inst),
-    .store_inst(store_inst),
-    .immediate_inst(immediate_inst),
-    .branch_inst(branch_inst),
-    .opcode(opcode),
-    .branch_link(branch_link),
-    .pass_cond(pass_cond)
+  control_unit main_control
+    (.instruction(instruction_d[31:20])
+    ,.resetn(resetn)
+    ,.reg_w_en(reg_w_en)
+    ,.load_inst(load_inst)
+    ,.store_inst(store_inst)
+    ,.immediate_inst(immediate_inst_d)
+    ,.branch_inst(branch_inst_d)
+    ,.opcode(opcode)
+    ,.branch_link(branch_link)
+    );
+
+  branch_control_unit branch_check
+    (.zero_r(zero_r)
+    ,.negative_r(negative_r)
+    ,.carry_r(carry_r)
+    ,.overflow_r(overflow_r)
+    ,.pass_cond(pass_cond)
     );
 
   mux32b2to1 pc_add
     (.zero_i(pc + 4)
     ,.one_i(pc_x + {{6{instruction_m[23]}}, instruction_m[23:0], 2'b00})
-    ,.select_i(branch_inst & pass_cond)
+    ,.select_i(branch_inst_x & pass_cond)
     ,.out_o(pc_n)
     );
 
@@ -89,48 +91,64 @@ module cpu (
     (.zero_i(instruction_x[15:12])
     ,.one_i(4'b1110)
     ,.select_i(branch_link)
-    ,.out_o(inst_w_addr)
+    ,.out_o(inst_write_addr)
     );
 
   registers arm_regs
     (.rd_addr_1_i(instruction_d[19:16])
     ,.rd_addr_2_i(instruction_d[3:0])
-    ,.w_addr_i(inst_w_addr)
+    ,.w_addr_i(inst_write_addr_w)
     ,.data_i(write_reg)
-    ,.w_en_i(reg_w_en)
+    ,.w_en_i(reg_w_en_w)
     ,.clk_i(clk)
     ,.data_1_o(read_reg_one_d)
     ,.data_2_o(read_reg_two_d)
     );
 
   mux32b2to1 immediate_choice
-    (.zero_i({{24{instruction_x[7]}}, instruction_x[7:0]})
-    ,.one_i({{20{instruction_x[11]}}, instruction_x[11:0]})
+    (.zero_i({{24{instruction_d[7]}}, instruction_d[7:0]})
+    ,.one_i({{20{instruction_d[11]}}, instruction_d[11:0]})
     ,.select_i(store_inst | load_inst)
-    ,.out_o(immediate)
+    ,.out_o(immediate_d)
+    );
+
+  mux32b3to1 forwarding_one
+    (.zero_i(read_reg_one_x)
+    ,.one_i(ALU_o_m)
+    ,.two_i(write_reg)
+    ,.select_i()
+    ,.out_o(ALU_one_i)
+    );
+
+  mux32b3to1 forwarding_two
+    (.zero_i(read_reg_two_x)
+    ,.one_i(ALU_o_m)
+    ,.two_i(write_reg)
+    ,.select_i()
+    ,.out_o(reg_or_forward_x)
     );
 
   mux32b2to1 imm_or_reg
-    (.zero_i(read_reg_two_x)
-    ,.one_i(immediate)
-    ,.select_i(immediate_inst)
-    ,.out_o(alu_two_i)
+    (.zero_i(reg_or_forward_x)
+    ,.one_i(immediate_x)
+    ,.select_i(immediate_inst_x)
+    ,.out_o(ALU_two_i)
     );
 
   ALU main_alu
-    (.data_1_i(read_reg_one_x)
-    ,.data_2_i(alu_two_i)
+    (.data_1_i(ALU_one_i)
+    ,.data_2_i(ALU_two_i)
     ,.data_o(ALU_o_x)
-    ,.control_i(opcode)
+    ,.control_i(opcode_x)
     ,.overflow(overflow)
     ,.carry(carry)
     );
 
   data_mem cpu_data
     (.addr_i(ALU_o_m)
-    ,.data_i(read_reg_two_m)
-    ,.w_en_i(store_inst)
-    ,.rd_en_i(load_inst)
+    ,.data_i(reg_or_forward_m)
+    ,.w_en_i(store_inst_m)
+    ,.rd_en_i(load_inst_m)
     ,.clk_i(clk)
     ,.data_o(read_data_m)
     );
@@ -138,14 +156,14 @@ module cpu (
   mux32b2to1 write_choice
     (.zero_i(ALU_o_w)
     ,.one_i(read_data_w)
-    ,.select_i(load_inst)
+    ,.select_i(load_inst_w)
     ,.out_o(data_into_reg)
     );
 
   mux32b2to1 link_choice
     (.zero_i(data_into_reg)
-    ,.one_i(pc)
-    ,.select_i(branch_link)
+    ,.one_i(pc_w)
+    ,.select_i(branch_link_w)
     ,.out_o(write_reg)
     );
 
@@ -156,8 +174,8 @@ module cpu (
       pc <= pc_n;
     end
     if ((~branch_inst) & (~store_inst) & (~load_inst)) begin
-      negative_r <= ALU_o[31];
-      zero_r <= (ALU_o == 32'b0);
+      negative_r <= ALU_o_x[31];
+      zero_r <= (ALU_o_x == 32'b0);
       carry_r <= carry;
       overflow_r <= overflow;
     end
@@ -181,11 +199,15 @@ module cpu (
       pc_x <= 32'b0;
       read_reg_one_x <= 32'b0;
       read_reg_two_x <= 32'b0;
+      opcode_x <= 4'b0;
+      immediate_x <= 32'b0;
     end else begin
       instruction_x <= instruction_d;
       pc_x <= pc_d;
       read_reg_one_x <= read_reg_one_d;
-      read_ref_two_x <= read_reg_two_d;
+      read_reg_two_x <= read_reg_two_d;
+      opcode_x <= opcode;
+      immediate_x <= immediate_d;
     end
   end
   
@@ -198,7 +220,7 @@ module cpu (
       pc_m <= 32'b0;
     end else begin
       instruction_m <= instruction_x;
-      read_reg_two_m <= read_reg_two_x;
+      reg_or_forwarded_m <= reg_or_forwarded_x;
       ALU_o_m <= ALU_o_x;
       pc_m <= pc_x;
     end
@@ -210,10 +232,12 @@ module cpu (
       read_data_w <= 32'b0;
       ALU_o_w <= 32'b0;
       instruction_w <= 32'b0;
+      pc_w <= 32'b0;
     end else begin
       read_data_w <= read_data_m;
       ALU_o_w <= ALU_o_m;
       instruction_w <= instruction_m;
+      pc_w <= pc_m;
     end
   end
 endmodule
@@ -368,6 +392,24 @@ module mux32b2to1
   end
 endmodule
 
+module mux32b3to1
+  ( input wire [31:0] zero_i
+  , input wire [31:0] one_i
+  , input wire [31:0] two_i
+  , input wire [1:0] select_i
+  , output reg [31:0] out_o
+  );
+
+  always @(*) begin
+    case (select_i)
+      2'b00 : out_o = zero_i;
+      2'b01 : out_o = one_i;
+      2'b10 : out_o = two_i;
+      default : out_o = 32'b0;
+    endcase
+  end
+endmodule
+
 module mux4b2to1
   ( input wire [3:0] zero_i
   , input wire [3:0] one_i
@@ -386,10 +428,6 @@ endmodule
 
 module control_unit
   (input wire [11:0] instruction
-  , input wire zero_r
-  , input wire negative_r
-  , input wire carry_r
-  , input wire overflow_r
   , input wire resetn
   , output wire reg_w_en
   , output wire load_inst
@@ -398,7 +436,6 @@ module control_unit
   , output wire branch_inst
   , output reg [3:0] opcode
   , output wire branch_link
-  , output reg pass_cond
   );
 //////////////////////////branch and link ////////////////////////////////////////////////////////data processing/////////////////////////////////////////load/////////////////////////
   assign reg_w_en = ((instruction[7] & ~instruction[6] & instruction[5] & instruction[4]) | (~instruction[7] & ~instruction[6]) | (~instruction[7] & instruction[6] & instruction[0])) & resetn;
@@ -411,12 +448,20 @@ module control_unit
   always @(*) begin
     if ((~branch_inst) & (~store_inst) & (~load_inst)) begin
       opcode = instruction[4:1];
-    end else if (instruction[3]) begin
+    end else
       opcode = 4'b0100;
-    end else begin
-      opcode = 4'b0010;
     end
   end
+
+endmodule
+
+module branch_control_unit
+  ( input wire zero_r
+  , input wire negative_r
+  , input wire carry_r
+  , input wire overflow_r
+  , output reg pass_cond
+  );
 
   always @(*) begin
     case (instruction[11:8])
