@@ -22,9 +22,9 @@ module cpu (
   );
 
   assign led = (read_reg_one[1] & read_reg_one[0]) | (read_reg_one[0] & read_reg_one[2]);
-  assign debug_port1 = ALU_o_m[7:0];
-  assign debug_port2 = read_data_m[7:0];
-  assign debug_port3 = {3'b0,store_inst_m,3'b0,load_inst_m};
+  assign debug_port1 = pc_w[7:0];
+  assign debug_port2 = write_reg[7:0];
+  assign debug_port3 = inst_write_addr;
 
  //control wires
   wire reg_w_en_d, reg_w_en_x, reg_w_en_m, reg_w_en_w;
@@ -304,17 +304,18 @@ module inst_mem
   always @(*) begin
     case (rd_addr_i)
       //testing imm add,imm subtract, and unconditional branch
-      // 32'h00000000 : inst_o = 32'he2811003; //ADD R1, R1, #3
-      // 32'h00000004 : inst_o = 32'he2411002; //SUB R1, R1, #2
-      // 32'h00000008 : inst_o = 32'heafffffe; //B #-2
+      32'h00000000 : inst_o = 32'he2811003; //ADD R1, R1, #3
+      32'h00000004 : inst_o = 32'h0a000064; //BEQ #100
+      32'h00000008 : inst_o = 32'he2411002; //SUB R1, R1, #2
+      32'h0000000c : inst_o = 32'heafffffd; //B #-2
       // default : inst_o = 32'heaffffff; //B #-1
 
       // testing reg add, load, store, branch
-      32'h00000000 : inst_o = 32'he2822003; //ADD R2, R2, #3
-      32'h00000004 : inst_o = 32'he0823003; //ADD R3, R2, R3
-      32'h00000008 : inst_o = 32'he5823000; //STR R3, [R2]
-      32'h0000000c : inst_o = 32'he5923000; //LDR R3, [R2]
-      32'h00000010 : inst_o = 32'heafffffd; //B #-2
+      // 32'h00000000 : inst_o = 32'he2822003; //ADD R2, R2, #3
+      // 32'h00000004 : inst_o = 32'he0823003; //ADD R3, R2, R3
+      // 32'h00000008 : inst_o = 32'he5823000; //STR R3, [R2]
+      // 32'h0000000c : inst_o = 32'he5923000; //LDR R3, [R2]
+      // 32'h00000010 : inst_o = 32'heafffffd; //B #-2
       // default : inst_o = 32'heaffffff; //B #-1
 
       // testing branch+link, conditinal branch
