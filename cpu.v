@@ -22,9 +22,9 @@ module cpu (
   );
 
   assign led = (read_reg_one[1] & read_reg_one[0]) | (read_reg_one[0] & read_reg_one[2]);
-  assign debug_port1 = pc[7:0];
-  assign debug_port2 = write_reg[7:0];
-  assign debug_port3 = {4'b0, inst_w_addr};
+  assign debug_port1 = ALU_o_m[7:0];
+  assign debug_port2 = read_data_m[7:0];
+  assign debug_port3 = {3'b0,store_inst_m,3'b0,load_inst_m};
 
  //control wires
   wire reg_w_en_d, reg_w_en_x, reg_w_en_m, reg_w_en_w;
@@ -43,12 +43,12 @@ module cpu (
   reg [31:0] pc, pc_d, pc_x, pc_m, pc_n, pc_w;
   reg [31:0] read_reg_one_d, read_reg_one_x, read_reg_two_d, read_reg_two_x;
   reg [31:0] reg_or_forward_x, reg_or_forward_m;
-  reg [31:0] ALU_o_x, ALU_o_m, ALU_o_w;
-  reg [31:0] read_data_m, read_data_w;
+  reg [31:0] ALU_o_x, ALU_o_m;
+  reg [31:0] read_data_m;
   reg [31:0] write_reg;
   reg [31:0] immediate_d, immediate_x;
   reg [31:0] ALU_one_i, ALU_two_i;
-  reg [31:0] data_into_reg;
+  reg [31:0] data_into_reg_m, data_into_reg_w;
   reg [3:0]  inst_write_addr;
   reg [1:0]  choice_one, choice_two;
   reg        overflow;
@@ -81,7 +81,7 @@ module cpu (
     );
 
   assign take_branch = branch_inst_x & pass_cond;
-  assign squash = ((take_branch | take_branch_n) & take_branch_n_n);
+  assign squash = ((take_branch | take_branch_n) & ~take_branch_n_n);
 
   mux32b2to1 pc_add
     (.zero_i(pc + 4)
@@ -116,39 +116,45 @@ module cpu (
   mux32b2to1 immediate_choice
     (.zero_i({{24{instruction_d[7]}}, instruction_d[7:0]})
     ,.one_i({{20{instruction_d[11]}}, instruction_d[11:0]})
-    ,.select_i(store_inst | load_inst)
+    ,.select_i(store_inst_d | load_inst_d)
     ,.out_o(immediate_d)
     );
 
   forwarding_unit data_one_mux
-    (.destination(instruction_m[15:12])
+    (.destination_p(instruction_m[15:12])
+    ,.destination_pp(instruction_w[15:12])
     ,.source(instruction_x[19:16])
-    ,.load(load_inst_m)
-    ,.store(store_inst_m)
+    ,.load_p(load_inst_m)
+    ,.store_p(store_inst_m)
+    ,.load_pp(load_inst_w)
+    ,.store_pp(store_inst_w)
     ,.choice(choice_one)
     );
 
   forwarding_unit data_two_mux
-    (.destination(instruction_m[15:12])
-    ,.source(instruction[3:0])
-    ,.load(load_inst_m)
-    ,.store(store_inst_m)
+    (.destination_p(instruction_m[15:12])
+    ,.destination_pp(instruction_w[15:12])
+    ,.source(instruction_x[3:0])
+    ,.load_p(load_inst_m)
+    ,.store_p(store_inst_m)
+    ,.load_pp(load_inst_w)
+    ,.store_pp(store_inst_w)
     ,.choice(choice_two)
     );
 
 
   mux32b3to1 forwarding_one
     (.zero_i(read_reg_one_x)
-    ,.one_i(ALU_o_m)
-    ,.two_i(read_data_m)
+    ,.one_i(data_into_reg_m)
+    ,.two_i(data_into_reg_w)
     ,.select_i(choice_one)
     ,.out_o(ALU_one_i)
     );
 
   mux32b3to1 forwarding_two
     (.zero_i(read_reg_two_x)
-    ,.one_i(ALU_o_m)
-    ,.two_i(read_data_m)
+    ,.one_i(data_into_reg_m)
+    ,.two_i(data_into_reg_w)
     ,.select_i(choice_two)
     ,.out_o(reg_or_forward_x)
     );
@@ -179,14 +185,14 @@ module cpu (
     );
 
   mux32b2to1 write_choice
-    (.zero_i(ALU_o_w)
-    ,.one_i(read_data_w)
-    ,.select_i(load_inst_w)
-    ,.out_o(data_into_reg)
+    (.zero_i(ALU_o_m)
+    ,.one_i(read_data_m)
+    ,.select_i(load_inst_m)
+    ,.out_o(data_into_reg_m)
     );
 
   mux32b2to1 link_choice
-    (.zero_i(data_into_reg)
+    (.zero_i(data_into_reg_w)
     ,.one_i(pc_w)
     ,.select_i(branch_link_w)
     ,.out_o(write_reg)
@@ -204,7 +210,7 @@ module cpu (
 
   //condition bits register
   always @(posedge clk) begin
-    if ((~branch_inst) & (~store_inst) & (~load_inst)) begin
+    if ((~branch_inst_x) & (~store_inst_x) & (~load_inst_x)) begin
       negative_r <= ALU_o_x[31];
       zero_r <= (ALU_o_x == 32'b0);
       carry_r <= carry;
@@ -269,11 +275,11 @@ module cpu (
 
   //memory to write
   always @(posedge clk) begin
-    read_data_w <= read_data_m;
-    ALU_o_w <= ALU_o_m;
+    data_into_reg_w <= data_into_reg_m;
     instruction_w <= instruction_m;
     pc_w <= pc_m;
     load_inst_w <= load_inst_m;
+    store_inst_w <= store_inst_m;
     reg_w_en_w <= reg_w_en_m;
     branch_link_w <= branch_link_m;
   end
@@ -297,18 +303,18 @@ module inst_mem
 
   always @(*) begin
     case (rd_addr_i)
-      // testing imm add,imm subtract, and unconditional branch
+      //testing imm add,imm subtract, and unconditional branch
       // 32'h00000000 : inst_o = 32'he2811003; //ADD R1, R1, #3
       // 32'h00000004 : inst_o = 32'he2411002; //SUB R1, R1, #2
       // 32'h00000008 : inst_o = 32'heafffffe; //B #-2
       // default : inst_o = 32'heaffffff; //B #-1
 
       // testing reg add, load, store, branch
-      // 32'h00000000 : inst_o = 32'he2822003; //ADD R2, R2, #3
-      // 32'h00000004 : inst_o = 32'he0823003; //ADD R3, R2, R3
-      // 32'h00000008 : inst_o = 32'he5823000; //STR R3, [R2]
-      // 32'h0000000c : inst_o = 32'he5924000; //LDR R4, [R2]
-      // 32'h00000010 : inst_o = 32'heafffffd; //B #-3
+      32'h00000000 : inst_o = 32'he2822003; //ADD R2, R2, #3
+      32'h00000004 : inst_o = 32'he0823003; //ADD R3, R2, R3
+      32'h00000008 : inst_o = 32'he5823000; //STR R3, [R2]
+      32'h0000000c : inst_o = 32'he5923000; //LDR R3, [R2]
+      32'h00000010 : inst_o = 32'heafffffd; //B #-2
       // default : inst_o = 32'heaffffff; //B #-1
 
       // testing branch+link, conditinal branch
@@ -320,26 +326,26 @@ module inst_mem
       //32'h00000014 : inst_o = 32'hebfffffd; //Bl #-3
 
       // 12 instructions
-      32'h00000000 : inst_o = 32'he2811003; //ADD R1, R1, #3 TESTING ADD IMM 1
-      32'h00000004 : inst_o = 32'he2411002; //SUB R1, R1, #2 TESTING SUB IMM 2
-      32'h00000008 : inst_o = 32'he2822003; //ADD R2, R2, #3
-      32'h0000000c : inst_o = 32'he0823003; //ADD R3, R2, R3 TESTING ADD REG 3
-      32'h00000010 : inst_o = 32'he5823000; //STR R3, [R2]   TESTING STR     4
-      32'h00000014 : inst_o = 32'he5924000; //LDR R4, [R2]   TESTING LDR     5
-      32'h00000018 : inst_o = 32'he0423001; //SUB R3, R2, R1 TESTING SUB REG 6
-      32'h0000001c : inst_o = 32'he1811002; //ORR R1, R2     TESTING ORR     7
-      32'h00000020 : inst_o = 32'he0011002; //AND R1, R2     TESTING AND     8
-      32'h00000024 : inst_o = 32'he0211002; //EOR R1, R2     TESTING EOR     9
-      32'h00000028 : inst_o = 32'he0411001; //RESET R1 to 0
-      32'h0000002c : inst_o = 32'he0422002; //RESET R2 to 0
-      32'h00000030 : inst_o = 32'hea000004; //B #4           TESTING B       10
-
-      32'h00000040 : inst_o = 32'he2811003; //ADD R1, R1, #3
-      32'h00000044 : inst_o = 32'he2822007; //ADD R2, R2, #7
-      32'h00000048 : inst_o = 32'he0423001; //SUB R3, R2, R1
-      32'h0000004c : inst_o = 32'h0a000002; //BEQ #2         TESTING BEQ     11
-      32'h00000050 : inst_o = 32'he2422001; //SUB R2, R2, #1
-      32'h00000054 : inst_o = 32'hebfffffd; //Bl #-3         TESTING BL      12
+      // 32'h00000000 : inst_o = 32'he2811003; //ADD R1, R1, #3 TESTING ADD IMM 1
+      // 32'h00000004 : inst_o = 32'he2411002; //SUB R1, R1, #2 TESTING SUB IMM 2
+      // 32'h00000008 : inst_o = 32'he2822003; //ADD R2, R2, #3
+      // 32'h0000000c : inst_o = 32'he0823003; //ADD R3, R2, R3 TESTING ADD REG 3
+      // 32'h00000010 : inst_o = 32'he5823000; //STR R3, [R2]   TESTING STR     4
+      // 32'h00000014 : inst_o = 32'he5924000; //LDR R4, [R2]   TESTING LDR     5
+      // 32'h00000018 : inst_o = 32'he0423001; //SUB R3, R2, R1 TESTING SUB REG 6
+      // 32'h0000001c : inst_o = 32'he1811002; //ORR R1, R2     TESTING ORR     7
+      // 32'h00000020 : inst_o = 32'he0011002; //AND R1, R2     TESTING AND     8
+      // 32'h00000024 : inst_o = 32'he0211002; //EOR R1, R2     TESTING EOR     9
+      // 32'h00000028 : inst_o = 32'he0411001; //RESET R1 to 0
+      // 32'h0000002c : inst_o = 32'he0422002; //RESET R2 to 0
+      // 32'h00000030 : inst_o = 32'hea000004; //B #4           TESTING B       10
+      //
+      // 32'h00000040 : inst_o = 32'he2811003; //ADD R1, R1, #3
+      // 32'h00000044 : inst_o = 32'he2822007; //ADD R2, R2, #7
+      // 32'h00000048 : inst_o = 32'he0423001; //SUB R3, R2, R1
+      // 32'h0000004c : inst_o = 32'h0a000002; //BEQ #2         TESTING BEQ     11
+      // 32'h00000050 : inst_o = 32'he2422001; //SUB R2, R2, #1
+      // 32'h00000054 : inst_o = 32'hebfffffd; //Bl #-3         TESTING BL      12
       default : inst_o = 32'heaffffff; //B #-1
     endcase
   end
@@ -529,11 +535,23 @@ module branch_control_unit
 endmodule
 
 module forwarding_unit
-  ( input wire [3:0] destination
+  ( input wire [3:0] destination_pp
+  , input wire [3:0] destination_p
   , input wire [3:0] source
-  , input wire load
-  , input wire store
+  , input wire load_pp
+  , input wire store_pp
+  , input wire load_p
+  , input wire store_p
   , output reg [1:0] choice
   );
-  assign choice = ((destination !== source) | store) ? 2'b00 : load ? 2'b10 : 2'b01;
+
+  always @(*) begin
+    if (destination_p == source & ~store_p) begin
+      choice = 2'b01;
+    end else if (destination_pp == source & ~store_pp) begin
+      choice = 2'b10;
+    end else begin
+      choice = 2'b00;
+    end
+  end
 endmodule
