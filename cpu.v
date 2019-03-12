@@ -21,20 +21,22 @@ module cpu (
   output wire [7:0] debug_port3
   );
 
-  assign led = (read_reg_one[1] & read_reg_one[0]) | (read_reg_one[0] & read_reg_one[2]);
-  assign debug_port1 = pc_w[7:0];
-  assign debug_port2 = write_reg[7:0];
-  assign debug_port3 = inst_write_addr;
+  assign led = (read_reg_one_d[1] & read_reg_one_d[0]) | (read_reg_one_d[0] & read_reg_one_d[2]);
+  assign debug_port1 = read_reg_two_d[7:0];
+  assign debug_port2 = reg_or_forward_m[7:0];
+  assign debug_port3 = {3'b0, store_inst_m, 3'b0, load_inst_m};
 
  //control wires
-  wire reg_w_en_d, reg_w_en_x, reg_w_en_m, reg_w_en_w;
-  wire load_inst_d, load_inst_x, load_inst_m, load_inst_w;
-  wire store_inst_d, store_inst_x, store_inst_m;
-  wire immediate_inst_d, immediate_inst_x;
-  wire branch_inst_d, branch_inst_x;
-  wire branch_link_d, branch_link_x, branch_link_m, branch_link_w;
-  wire [3:0] opcode_d, opcode_x;
-  wire take_branch, take_branch_n, take_branch_n_n;
+  reg reg_w_en_d, reg_w_en_x, reg_w_en_m, reg_w_en_w;
+  reg load_inst_d, load_inst_x, load_inst_m, load_inst_w;
+  reg store_inst_d, store_inst_x, store_inst_m, store_inst_w;
+  reg immediate_inst_d, immediate_inst_x;
+  reg branch_inst_d, branch_inst_x;
+  reg branch_link_d, branch_link_x, branch_link_m, branch_link_w;
+  reg [3:0] opcode_d, opcode_x;
+  wire take_branch;
+  reg take_branch_n, take_branch_n_n;
+  reg pass_cond;
   wire squash;
   ///////////////
 
@@ -53,6 +55,7 @@ module cpu (
   reg [1:0]  choice_one, choice_two;
   reg        overflow;
   reg        carry;
+  reg [3:0] reg_two_addr;
   ///////////////////////
 
   //condition bits//
@@ -102,6 +105,13 @@ module cpu (
     ,.out_o(inst_write_addr)
     );
 
+  mux4b2to1 reg_two_in_mux
+    (.zero_i(instruction_d[3:0])
+    ,.one_i(instruction_d[15:12])
+    ,.select_i(store_inst_d | load_inst_d)
+    ,.out_o(reg_two_addr)
+    );
+
   registers arm_regs
     (.rd_addr_1_i(instruction_d[19:16])
     ,.rd_addr_2_i(instruction_d[3:0])
@@ -130,6 +140,13 @@ module cpu (
     ,.store_pp(store_inst_w)
     ,.choice(choice_one)
     );
+
+  // mux32b2to1 forwarding_unit_source_mux
+  //   (.zero_i(instruction_x[3:0])
+  //   ,.one_i(instruction_x[15:12])
+  //   ,.select_i(store_inst_x | load_inst_x)
+  //   ,.out_o(ALU_one_i)
+  //   );
 
   forwarding_unit data_two_mux
     (.destination_p(instruction_m[15:12])
@@ -270,7 +287,6 @@ module cpu (
     store_inst_m <= store_inst_x;
     reg_w_en_m <= reg_w_en_x;
     branch_link_m <= branch_link_x;
-    take_branch_m <= take_branch_x;
   end
 
   //memory to write
@@ -304,11 +320,23 @@ module inst_mem
   always @(*) begin
     case (rd_addr_i)
       //testing imm add,imm subtract, and unconditional branch
-      32'h00000000 : inst_o = 32'he2811003; //ADD R1, R1, #3
-      32'h00000004 : inst_o = 32'h0a000064; //BEQ #100
-      32'h00000008 : inst_o = 32'he2411002; //SUB R1, R1, #2
-      32'h0000000c : inst_o = 32'heafffffd; //B #-2
+      // 32'h00000000 : inst_o = 32'he2811003; //ADD R1, R1, #3
+      // 32'h00000004 : inst_o = 32'h0a000064; //BEQ #100
+      // 32'h00000008 : inst_o = 32'he2411002; //SUB R1, R1, #2
+      // 32'h0000000c : inst_o = 32'heafffffd; //B #-2
       // default : inst_o = 32'heaffffff; //B #-1
+
+      32'h00000000 : inst_o = 32'he2833003; //
+      32'h00000004 : inst_o = 32'he2822002; //
+      32'h00000008 : inst_o = 32'he2844004; //ADD R4, R4, #3
+      32'h0000000c : inst_o = 32'he2811004; //ADD R1, R1, #3
+      32'h00000010 : inst_o = 32'he2855004; //ADD R5, R5, #3
+      32'h00000014 : inst_o = 32'he5923000; //LDR R3, [R2]
+      32'h00000018 : inst_o = 32'he2844004; //ADD R4, R4, #3
+      32'h0000001c : inst_o = 32'he2855004; //ADD R5, R5, #3
+      32'h00000020 : inst_o = 32'he2866004; //ADD R6, R6, #3
+      32'h00000024 : inst_o = 32'he5823000; //STR R3, [R2]
+      32'h00000028 : inst_o = 32'heafffff8; //B #-2
 
       // testing reg add, load, store, branch
       // 32'h00000000 : inst_o = 32'he2822003; //ADD R2, R2, #3
@@ -358,7 +386,7 @@ module data_mem
   , input wire w_en_i
   , inout wire rd_en_i
   , input wire clk_i
-  , output reg [31:0] data_o
+  , output wire [31:0] data_o
   );
 
   reg [31:0] data [31:0];
@@ -547,7 +575,7 @@ module forwarding_unit
   );
 
   always @(*) begin
-    if (destination_p == source & ~store_p) begin
+    if ((destination_p == source & ~store_p)) begin
       choice = 2'b01;
     end else if (destination_pp == source & ~store_pp) begin
       choice = 2'b10;
