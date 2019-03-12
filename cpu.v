@@ -24,7 +24,7 @@ module cpu (
   assign led = (read_reg_one_d[1] & read_reg_one_d[0]) | (read_reg_one_d[0] & read_reg_one_d[2]);
   assign debug_port1 = {read_reg_one_d[3:0],read_reg_two_d[3:0]};
   assign debug_port2 = {ALU_o_m[3:0],write_reg[3:0]};
-  assign debug_port3 = pc;
+  assign debug_port3 = {3'b0, store_inst_m, 3'b0, load_inst_m};
 
  //control wires
   reg reg_w_en_d, reg_w_en_x, reg_w_en_m, reg_w_en_w;
@@ -333,7 +333,7 @@ module inst_mem
       32'h00000018 : inst_o = 32'he5823000; //STR R3, [R2]
       32'h0000001c : inst_o = 32'he5923000; //LDR R3, [R2]
       32'h00000020 : inst_o = 32'he2833003; //ADD R3, R3, #3
-      32'h00000020 : inst_o = 32'heafffffc; //B #-2
+      32'h00000024 : inst_o = 32'heafffffc; //B #-2
 
       // testing reg add, load, store, branch
       // 32'h00000000 : inst_o = 32'he2822003; //ADD R2, R2, #3
