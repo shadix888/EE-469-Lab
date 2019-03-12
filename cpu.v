@@ -22,9 +22,9 @@ module cpu (
   );
 
   assign led = (read_reg_one_d[1] & read_reg_one_d[0]) | (read_reg_one_d[0] & read_reg_one_d[2]);
-  assign debug_port1 = read_reg_two_d[7:0];
-  assign debug_port2 = reg_or_forward_m[7:0];
-  assign debug_port3 = {3'b0, store_inst_m, 3'b0, load_inst_m};
+  assign debug_port1 = {read_reg_one_d[3:0],read_reg_two_d[3:0]};
+  assign debug_port2 = {ALU_o_m[3:0],write_reg[3:0]};
+  assign debug_port3 = pc;
 
  //control wires
   reg reg_w_en_d, reg_w_en_x, reg_w_en_m, reg_w_en_w;
@@ -38,6 +38,7 @@ module cpu (
   reg take_branch_n, take_branch_n_n;
   reg pass_cond;
   wire squash;
+  wire [3:0] address_choice;
   ///////////////
 
   //connection wires/////
@@ -114,7 +115,7 @@ module cpu (
 
   registers arm_regs
     (.rd_addr_1_i(instruction_d[19:16])
-    ,.rd_addr_2_i(instruction_d[3:0])
+    ,.rd_addr_2_i(reg_two_addr)
     ,.w_addr_i(inst_write_addr)
     ,.data_i(write_reg)
     ,.w_en_i(reg_w_en_w)
@@ -141,17 +142,17 @@ module cpu (
     ,.choice(choice_one)
     );
 
-  // mux32b2to1 forwarding_unit_source_mux
-  //   (.zero_i(instruction_x[3:0])
-  //   ,.one_i(instruction_x[15:12])
-  //   ,.select_i(store_inst_x | load_inst_x)
-  //   ,.out_o(ALU_one_i)
-  //   );
+  mux4b2to1 forwarding_unit_source_mux
+    (.zero_i(instruction_x[3:0])
+    ,.one_i(instruction_x[15:12])
+    ,.select_i(store_inst_x)
+    ,.out_o(address_choice)
+    );
 
   forwarding_unit data_two_mux
     (.destination_p(instruction_m[15:12])
     ,.destination_pp(instruction_w[15:12])
-    ,.source(instruction_x[3:0])
+    ,.source(address_choice)
     ,.load_p(load_inst_m)
     ,.store_p(store_inst_m)
     ,.load_pp(load_inst_w)
@@ -320,23 +321,19 @@ module inst_mem
   always @(*) begin
     case (rd_addr_i)
       //testing imm add,imm subtract, and unconditional branch
-      // 32'h00000000 : inst_o = 32'he2811003; //ADD R1, R1, #3
-      // 32'h00000004 : inst_o = 32'h0a000064; //BEQ #100
-      // 32'h00000008 : inst_o = 32'he2411002; //SUB R1, R1, #2
+      32'h00000000 : inst_o = 32'he2811003; //ADD R1, R1, #3
+      32'h00000004 : inst_o = 32'he2811003; //ADD R1, R1, #3
+      32'h00000008 : inst_o = 32'h0a000064; //BEQ #100
+      32'h0000000c : inst_o = 32'he2411002; //SUB R1, R1, #2
       // 32'h0000000c : inst_o = 32'heafffffd; //B #-2
       // default : inst_o = 32'heaffffff; //B #-1
 
-      32'h00000000 : inst_o = 32'he2833003; //
-      32'h00000004 : inst_o = 32'he2822002; //
-      32'h00000008 : inst_o = 32'he2844004; //ADD R4, R4, #3
-      32'h0000000c : inst_o = 32'he2811004; //ADD R1, R1, #3
-      32'h00000010 : inst_o = 32'he2855004; //ADD R5, R5, #3
-      32'h00000014 : inst_o = 32'he5923000; //LDR R3, [R2]
-      32'h00000018 : inst_o = 32'he2844004; //ADD R4, R4, #3
-      32'h0000001c : inst_o = 32'he2855004; //ADD R5, R5, #3
-      32'h00000020 : inst_o = 32'he2866004; //ADD R6, R6, #3
-      32'h00000024 : inst_o = 32'he5823000; //STR R3, [R2]
-      32'h00000028 : inst_o = 32'heafffff8; //B #-2
+      32'h00000010 : inst_o = 32'he2833003; //
+      32'h00000014 : inst_o = 32'he2822001; //
+      32'h00000018 : inst_o = 32'he5823000; //STR R3, [R2]
+      32'h0000001c : inst_o = 32'he5923000; //LDR R3, [R2]
+      32'h00000020 : inst_o = 32'he2833003; //ADD R3, R3, #3
+      32'h00000020 : inst_o = 32'heafffffc; //B #-2
 
       // testing reg add, load, store, branch
       // 32'h00000000 : inst_o = 32'he2822003; //ADD R2, R2, #3
